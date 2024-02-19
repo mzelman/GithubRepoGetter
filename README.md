@@ -132,4 +132,5 @@ Accept: application/json
 1. Clone this repository to your local machine.
 2. Navigate to the project directory.
 3. Run the project using the mvn spring-boot:run command.
-4. Make requests to the API endpoint as described above.
+4. You can also create a jar file with command mvn clean package and run it with java -jar githubrepogetter-1.0.0.jar.
+5. Make requests to the API endpoint as described above.
