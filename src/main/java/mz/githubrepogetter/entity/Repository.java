@@ -1,4 +1,4 @@
-package mz.githubrepogetter.pojo;
+package mz.githubrepogetter.entity;
 
 import java.util.List;
 

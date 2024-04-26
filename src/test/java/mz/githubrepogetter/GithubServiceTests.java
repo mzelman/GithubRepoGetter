@@ -1,111 +1,79 @@
 package mz.githubrepogetter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.when;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.MockitoAnnotations;
-import org.mockito.Spy;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.client.RestClientTest;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
 
-import mz.githubrepogetter.exception.ServiceUnavailableException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import mz.githubrepogetter.entity.Branch;
+import mz.githubrepogetter.entity.Commit;
+import mz.githubrepogetter.entity.Owner;
+import mz.githubrepogetter.entity.Repository;
 import mz.githubrepogetter.exception.UsernameNotFoundException;
-import mz.githubrepogetter.pojo.Branch;
-import mz.githubrepogetter.pojo.Commit;
-import mz.githubrepogetter.pojo.Owner;
-import mz.githubrepogetter.pojo.Repository;
 import mz.githubrepogetter.service.GithubService;
 
-@ExtendWith(MockitoExtension.class)
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+
+@RestClientTest(GithubService.class)
 public class GithubServiceTests {
 
-    @InjectMocks
-    private GithubService githubService;
+    @Autowired
+    MockRestServiceServer server;
 
-    @Spy
-    private GithubService githubServiceSpy;
+    @Autowired
+    GithubService githubService;
+
+    @Autowired
+    ObjectMapper mapper;
+
+    private List<Repository> repositories;
 
     @Test
-    void testGetUserRepositories200() throws IOException, URISyntaxException {
-        HttpURLConnection mockConnection = mock(HttpURLConnection.class);
-        when(mockConnection.getResponseCode()).thenReturn(200);
+    public void testGetUserRepositories() throws JsonProcessingException {
 
-        GithubService githubService = spy(new GithubService());
-        doReturn(Arrays.asList(new Branch(), new Branch())).when(githubService).getRepositoryBranches(any());
+        repositories = List.of(
+            new Repository("example1", new Owner("user1"), false, "url1", null),
+            new Repository("example2", new Owner("user1"), false, "url2", null),
+            new Repository("example3", new Owner("user1"), false, "url3", null)
+    );
 
-        doReturn(mockConnection).when(githubService).createConnection(anyString());
-        when(mockConnection.getInputStream()).thenReturn(createRepositoriesInputStream());
+        server.expect(requestTo("https://api.github.com/users/user1/repos"))
+                            .andRespond(withSuccess(mapper.writeValueAsString(repositories), MediaType.APPLICATION_JSON));
 
-        List<Repository> resultRepositories = githubService.getUserRepositories("user");
-
-        assertEquals(2, resultRepositories.size());
+        List<Repository> foundRepositories = githubService.getUserRepositories("user1");
+        assertEquals(3, foundRepositories.size());
     }
 
     @Test
-    public void testGetUserRepositories404() throws IOException, URISyntaxException {
-        HttpURLConnection mockConnection = mock(HttpURLConnection.class);
-        when(mockConnection.getResponseCode()).thenReturn(404);
+    public void testGetUserRepositoriesInvalidUser() throws JsonProcessingException {
 
-        String username = "user";
-        String baseUrl = "https://api.github.com/";
+        server.expect(requestTo("https://api.github.com/users/user1/repos"))
+        .andRespond(withStatus(HttpStatusCode.valueOf(404)));
 
-        doReturn(mockConnection).when(githubServiceSpy).createConnection(baseUrl + "users/" + username + "/repos");
-
-        assertThrows(UsernameNotFoundException.class, () -> githubServiceSpy.getUserRepositories(username));
-    }
-
-    @Test
-    public void testGetUserRepositories503() throws IOException, URISyntaxException {
-        HttpURLConnection mockConnection = mock(HttpURLConnection.class);
-        when(mockConnection.getResponseCode()).thenReturn(503);
-
-        String username = "user";
-        String baseUrl = "https://api.github.com/";
-
-        doReturn(mockConnection).when(githubServiceSpy).createConnection(baseUrl + "users/" + username + "/repos");
-
-        assertThrows(ServiceUnavailableException.class, () -> githubServiceSpy.getUserRepositories(username));
-    }
-
-    @Test
-    public void testCreateConnection() {
-        String testAddress = "https://example.com";
-        try {
-            HttpURLConnection connection = githubService.createConnection(testAddress);
-            assertNotNull(connection);
-            assertEquals("GET", connection.getRequestMethod());
-            assertEquals(testAddress, connection.getURL().toString());
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to fetch user repositories", e);
-        } catch (URISyntaxException e) {
-            throw new RuntimeException("Invalid URL", e);
-        }
+        assertThrows(UsernameNotFoundException.class, () -> githubService.getUserRepositories("user1"));
     }
 
     @Test
     public void testFilterOutForkRepositories_NoForks() {
-        Repository[] repositories = {
-                new Repository("example1", new Owner(), false, "url1", null),
-                new Repository("example2", new Owner(), false, "url2", null),
-                new Repository("example3", new Owner(), false, "url3", null)
-        };
+
+        repositories = List.of(
+            new Repository("example1", new Owner("user1"), false, "url1", null),
+            new Repository("example2", new Owner("user2"), false, "url2", null),
+            new Repository("example3", new Owner("user3"), false, "url3", null)
+    );
 
         List<Repository> filtered = githubService.filterOutForkRepositories(repositories);
 
@@ -114,11 +82,11 @@ public class GithubServiceTests {
 
     @Test
     public void testFilterOutForkRepositories_WithForks() {
-        Repository[] repositories = {
-                new Repository("example1", new Owner(), false, "url1", null),
-                new Repository("example2", new Owner(), true, "url2", null),
-                new Repository("example3", new Owner(), false, "url3", null)
-        };
+        repositories = List.of(
+            new Repository("example1", new Owner("user1"), false, "url1", null),
+            new Repository("example2", new Owner("user2"), true, "url2", null),
+            new Repository("example3", new Owner("user3"), false, "url3", null)
+    );
 
         List<Repository> filtered = githubService.filterOutForkRepositories(repositories);
 
@@ -127,11 +95,11 @@ public class GithubServiceTests {
 
     @Test
     public void testFilterOutForkRepositories_AllForks() {
-        Repository[] repositories = {
-                new Repository("example1", new Owner(), true, "url1", null),
-                new Repository("example2", new Owner(), true, "url2", null),
-                new Repository("example3", new Owner(), true, "url3", null)
-        };
+        repositories = List.of(
+            new Repository("example1", new Owner("user1"), true, "url1", null),
+            new Repository("example2", new Owner("user2"), true, "url2", null),
+            new Repository("example3", new Owner("user3"), true, "url3", null)
+    );
 
         List<Repository> filtered = githubService.filterOutForkRepositories(repositories);
 
@@ -139,80 +107,43 @@ public class GithubServiceTests {
     }
 
     @Test
-    public void testAddRepositoryBranches() {
+    public void testAddRepositoryBranches() throws JsonProcessingException {
 
-        MockitoAnnotations.openMocks(this);
+        repositories = List.of(
+            new Repository("example1", new Owner("user1"), true, "url1", null),
+            new Repository("example2", new Owner("user1"), true, "url2", null)
+    );
 
-        Repository repo1 = new Repository("repo1", new Owner(), false, "url1", null);
-        Repository repo2 = new Repository("repo2", new Owner(), false, "url2", null);
-        List<Repository> repositories = Arrays.asList(repo1, repo2);
-        List<Branch> branchesRepo1 = Arrays.asList(new Branch("branch1", new Commit()),
-                new Branch("branch2", new Commit()));
-        List<Branch> branchesRepo2 = Arrays.asList(new Branch("branch3", new Commit()),
-                new Branch("branch4", new Commit()));
+        List<Branch> branchesRepo1 = Arrays.asList(new Branch("branch1", new Commit("1234")),
+                new Branch("branch2", new Commit("2345")));
+        List<Branch> branchesRepo2 = Arrays.asList(new Branch("branch3", new Commit("3456")));
 
-        doReturn(branchesRepo1).when(githubServiceSpy).getRepositoryBranches(repo1);
-        doReturn(branchesRepo2).when(githubServiceSpy).getRepositoryBranches(repo2);
+        Repository repository1 = githubService.addRepositoryBranches(repositories.get(0), branchesRepo1);
+        Repository repository2 = githubService.addRepositoryBranches(repositories.get(1), branchesRepo2);
 
-        List<Repository> repositoriesWithBranches = githubServiceSpy.addRepositoryBranches(repositories);
-
-        assertEquals(2, repositoriesWithBranches.size());
-        assertEquals(branchesRepo1, repositoriesWithBranches.get(0).getBranches());
-        assertEquals(branchesRepo2, repositoriesWithBranches.get(1).getBranches());
+        assertEquals(2, repository1.getBranches().size());
+        assertEquals(1, repository2.getBranches().size());
     }
 
     @Test
-    public void testGetRepositoryBranches() throws IOException, URISyntaxException {
-        HttpURLConnection mockConnection = mock(HttpURLConnection.class);
-        when(mockConnection.getInputStream()).thenReturn(createBranchesInputStream());
+    public void getRepositoryBranchesTest() throws JsonProcessingException {
 
-        Repository repository = new Repository("repo1", new Owner(), false, "url1", null);
+        repositories = List.of(
+            new Repository("example1", new Owner("user1"), true, "url1", null),
+            new Repository("example2", new Owner("user1"), true, "url2", null)
+    );
 
-        doReturn(mockConnection).when(githubServiceSpy).createConnection(repository.getUrl() + "/branches");
+        List<Branch> branchesRepo1 = Arrays.asList(new Branch("branch1", new Commit("1234")),
+                new Branch("branch2", new Commit("2345")));
+        List<Branch> branchesRepo2 = Arrays.asList(new Branch("branch3", new Commit("3456")));
 
-        List<Branch> branches = githubServiceSpy.getRepositoryBranches(repository);
+        server.expect(requestTo("https://api.github.com/url1/branches"))
+            .andRespond(withSuccess(mapper.writeValueAsString(branchesRepo1), MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://api.github.com/url2/branches"))
+            .andRespond(withSuccess(mapper.writeValueAsString(branchesRepo2), MediaType.APPLICATION_JSON));
 
-        assertEquals(2, branches.size());
-    }
-
-    private InputStream createBranchesInputStream() {
-        String json = "[\n" +
-                "    {\n" +
-                "        \"name\": \"branch1\",\n" +
-                "        \"commit\": {\n" +
-                "            \"sha\": \"\"\n" +
-                "        }\n" +
-                "    },\n" +
-                "    {\n" +
-                "        \"name\": \"branch2\",\n" +
-                "        \"commit\": {\n" +
-                "            \"sha\": \"\"\n" +
-                "        }\n" +
-                "    }\n" +
-                "]";
-        return new ByteArrayInputStream(json.getBytes());
-    }
-
-    private InputStream createRepositoriesInputStream() {
-        String json = "[\n" +
-                "    {\n" +
-                "        \"name\": \"repo1\",\n" +
-                "        \"owner\": {\n" +
-                "            \"login\": \"user\"\n" +
-                "        },\n" +
-                "        \"fork\": false,\n" +
-                "        \"url\": \"url1\"\n" +
-                "    },\n" +
-                "    {\n" +
-                "        \"name\": \"repo2\",\n" +
-                "        \"owner\": {\n" +
-                "            \"login\": \"user\"\n" +
-                "        },\n" +
-                "        \"fork\": false,\n" +
-                "        \"url\": \"url2\"\n" +
-                "    }\n" +
-                "]";
-        return new ByteArrayInputStream(json.getBytes());
+            assertEquals(2, githubService.getRepositoryBranches(repositories.get(0)).size());
+            assertEquals(1, githubService.getRepositoryBranches(repositories.get(1)).size());
     }
 
 }
